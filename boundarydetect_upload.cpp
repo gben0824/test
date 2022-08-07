@@ -89,6 +89,7 @@ private:
     ros::Publisher pub_final;
     ros::Publisher pub_total;
     ros::Publisher pub_debug;
+    ros::Publisher pub_debug1;
     ros::Publisher pub_fan_shaped;
 
     geometry_msgs::PoseStamped last_pose;
@@ -100,6 +101,8 @@ private:
     pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloud_front_add;
     pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloud_back_add;
     pcl::PointCloud <pcl::PointXYZ> boundary_point_fan;
+    pcl::PointCloud <pcl::PointXYZ> boundary_point_fan_all;
+    pcl::PointCloud <pcl::PointXYZ> boundary_fan_inMap; // 在odom或map下的坐标
 
     pcl::ModelCoefficients::Ptr coefficients; // ransac用
     pcl::PointIndices::Ptr inliers;
@@ -183,6 +186,7 @@ public:
 
         pub_final = nh.advertise<sensor_msgs::PointCloud2>("/road_boundary", 10);
         pub_debug = nh.advertise<sensor_msgs::PointCloud2>("/debug", 10);  // 调试用
+        pub_debug1 = nh.advertise<sensor_msgs::PointCloud2>("/debug1", 10);  // 调试用
         pub_total = nh.advertise<sensor_msgs::PointCloud2>("/total", 10);  // 发布合并后的点云
 
         pub_fan_shaped = nh.advertise<sensor_msgs::PointCloud2>("/road_fan_shaped", 10);
@@ -233,16 +237,17 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
     pcl::transformPointCloud(*laserCloudIn, *laserCloudTransform, T1w); // 对iv 300线雷达点云进行旋转
     pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloud_front(new pcl::PointCloud<PointType>);
     *laserCloud_front = *laserCloud_front + *laserCloudTransform;
-    /*pcl::fromROSMsg(*laserCloudMsg1501, *laserCloudIn);
+
+    pcl::fromROSMsg(*laserCloudMsg1501, *laserCloudIn);
     *laserCloud_front = *laserCloud_front + *laserCloudIn;
     pcl::fromROSMsg(*laserCloudMsg1541, *laserCloudIn);
     *laserCloud_front = *laserCloud_front + *laserCloudIn;
     pcl::fromROSMsg(*laserCloudMsg0181, *laserCloudIn);
-    *laserCloud_front = *laserCloud_front + *laserCloudIn;  // 前向雷达点云*/
+    *laserCloud_front = *laserCloud_front + *laserCloudIn;  // 前向雷达点云
     pcl::PassThrough<PointType> pass;
     pass.setInputCloud(laserCloud_front);
     pass.setFilterFieldName("x");
-    pass.setFilterLimits(-2.0, 120.0);
+    pass.setFilterLimits(-1.0, 120.0);
     pass.filter(*laserCloud_front);  // 许多密集点构成的边界点
     // 下采样
 //    pcl::VoxelGrid<pcl::PointXYZ> filter;
@@ -322,7 +327,7 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
     laserCloud_back->clear();
     frame_cnt++;
 
-    if (frame_cnt == Cnt) {
+    if (frame_cnt == 20) {
         cloud_header = odomMsg->header;
 
         // 定义从local到map的变换矩阵
@@ -375,19 +380,19 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
 
         pcl::copyPointCloud(laserCloudNotGround_front, laserCloudNotGround_fan);
 
-        /*//去除离群点
+        //去除离群点
         pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
         sor.setInputCloud(laserCloudNotGround_fan.makeShared());
         sor.setMeanK(20);
         sor.setStddevMulThresh(1.0);
-        sor.filter(laserCloudNotGround_fan);*/
+        sor.filter(laserCloudNotGround_fan);
 
-       /* pcl::PassThrough <PointType> pass;
+        pcl::PassThrough <PointType> pass;
         pass.setInputCloud(laserCloudNotGround_fan.makeShared());
         pass.setFilterFieldName("z");
         // X_min小可以充分发挥补盲雷达的作用。
-        pass.setFilterLimits(-1.4, 0);
-        pass.filter(laserCloudNotGround_fan);*/
+        pass.setFilterLimits(-2.0, 0);
+        pass.filter(laserCloudNotGround_fan);
 
         //pcl::PassThrough <PointType> pass;
         pass.setInputCloud(laserCloudNotGround_fan.makeShared());
@@ -398,6 +403,26 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
 
         PickBoundary_front();
 
+        pcl::transformPointCloud(boundary_point_fan, boundary_fan_inMap, transform_1);
+        //boundary_fan_inMap.header.frame_id = "map";
+        boundary_fan_inMap.width = boundary_fan_inMap.points.size();
+        boundary_fan_inMap.height = 1;
+        boundary_fan_inMap.is_dense = true;
+        // 将各帧合成为一个点云
+        boundary_point_fan_all += boundary_fan_inMap;
+        //boundary_point_fan_all.header.frame_id = "map";
+        boundary_point_fan_all.width = boundary_point_fan_all.points.size();
+        boundary_point_fan_all.height = 1;
+        boundary_point_fan_all.is_dense = true;
+
+        
+
+        /*pcl::transformPointCloud(boundary_point_fan_all, boundary_point_fan_all, transform_1.inverse());
+        boundary_point_fan_all.header.frame_id = "base_link";*/
+
+        /*pcl::transformPointCloud(boundary_point_fan_all, boundary_point_fan_all, transform_1.inverse());
+        boundary_point_fan_all.header.frame_id = "base_link";*/
+
         //    //     For debug：发布边界点云
         sensor_msgs::PointCloud2 pc_debug;
         pcl::toROSMsg(laserCloudNotGround_front, pc_debug);
@@ -405,11 +430,17 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
         pc_debug.header.frame_id = "base_link";
         pub_debug.publish(pc_debug);   // topic name
 
+        sensor_msgs::PointCloud2 pc_debug_1;
+        pcl::toROSMsg(laserCloudNotGround_fan, pc_debug_1);
+        pc_debug_1.header.stamp = cloud_header.stamp;
+        pc_debug_1.header.frame_id = "base_link";
+        pub_debug1.publish(pc_debug_1);
+
         // 发布更新后的点云
         sensor_msgs::PointCloud2 pc_publish_front;
-        pcl::toROSMsg(boundary_point_fan, pc_publish_front);
+        pcl::toROSMsg(boundary_point_fan_all, pc_publish_front);
         pc_publish_front.header.stamp = cloud_header.stamp;
-        pc_publish_front.header.frame_id = "base_link";
+        pc_publish_front.header.frame_id = "map";
         pub_fan_shaped.publish(pc_publish_front);   // topic name: /road_fan_shaped
 
         planeFitting(laserCloud_back_add);
@@ -439,6 +470,7 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
         boundary_points_local.clear();  // 清空该帧的边沿点
 
         boundary_point_fan.clear();
+        boundary_fan_inMap.clear();
     }
 }
 
@@ -488,7 +520,7 @@ void BoundaryDetector::planeFitting(pcl::PointCloud<PointType>::ConstPtr pointCl
                  laserCloudNotGround.points[i].z * coefficients->values[2] +
                  coefficients->values[3] < 0.4))
             laserCloud_tmp.push_back(laserCloudNotGround.points[i]);
-    std::cout << " number of points in boundary: " << laserCloud_tmp.points.size() << std::endl;
+    //std::cout << " number of points in boundary: " << laserCloud_tmp.points.size() << std::endl;
 
 }
 
@@ -615,8 +647,8 @@ void BoundaryDetector::objectCluster(pcl::PointCloud<PointType>::ConstPtr pc_not
 //在base_link坐标系中计算边界点坐标  扇形
 void BoundaryDetector::PickBoundary_front() {
     //vector<vector<double> > r_vec(90,vector<double>(10000,0));
-    vector<vector<double> > r_radius(180,vector<double>(1,0));
-    vector<vector<double> > r_num(180,vector<double>(1,0));
+    vector<vector<double> > r_radius(900,vector<double>(1,0));
+    vector<vector<double> > r_num(900,vector<double>(1,0));
     double angle1 , r1 , max_num;
     int flag;
     bool first = true;
@@ -625,7 +657,7 @@ void BoundaryDetector::PickBoundary_front() {
         angle1 = atan2(laserCloudNotGround_fan.points[num].x,laserCloudNotGround_fan.points[num].y) * 57.3;  //转成角度
         r1  = sqrt(laserCloudNotGround_fan.points[num].x * laserCloudNotGround_fan.points[num].x
                    + laserCloudNotGround_fan.points[num].y * laserCloudNotGround_fan.points[num].y);
-        flag = int(angle1) ;
+        flag = int(angle1 * 5);
         if(first)
         {
             r_radius[flag][0] = r1;
@@ -635,11 +667,22 @@ void BoundaryDetector::PickBoundary_front() {
         max_num = std::max(r1,r_radius[flag][0]);
         if (max_num > r_radius[flag][0] )
         {
-            r_radius[flag][0] = max_num;
-            r_num[flag][0] = num;
+            if(angle1 > 60 && angle1 < 105 )
+            {
+               /* if (r1 > 60 && r1 < 70){
+                    r_radius[flag][0] = max_num;
+                    r_num[flag][0] = num;}*/
+                  //  std::cout<<"1  "<<angle1<<"  "<<r1<<std::endl;
+                continue;
+            } else
+            {
+                r_radius[flag][0] = max_num;
+                r_num[flag][0] = num;
+                std::cout<<"2  "<<angle1<<"  "<<r1<<std::endl;
+            }
         }
     }
-    for (int i = 0; i < 180; ++i) {
+    for (int i = 0; i < 900; ++i) {
         boundary_point_fan.points.push_back(laserCloudNotGround_fan.points[ r_num[i][0] ]);
     }
 
