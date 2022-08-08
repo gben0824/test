@@ -237,7 +237,18 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
     pcl::transformPointCloud(*laserCloudIn, *laserCloudTransform, T1w); // 对iv 300线雷达点云进行旋转
     pcl::PointCloud<pcl::PointXYZ>::Ptr laserCloud_front(new pcl::PointCloud<PointType>);
     *laserCloud_front = *laserCloud_front + *laserCloudTransform;
-
+    /*
+     * Eigen::Quaterniond q_1(odomMsg->pose.pose.orientation.w, odomMsg->pose.pose.orientation.x,
+                            odomMsg->pose.pose.orientation.y, odomMsg->pose.pose.orientation.z); // 当前帧的位姿
+       double roll1, pitch1, yaw1;
+       tf2::Quaternion dq1(q_1.x(), q_1.y(), q_1.z(), q_1.w());
+       tf2::Matrix3x3 m1(dq1);
+       m1.getRPY(roll1, tch1, yaw1);
+       if(abs(pitch1 * 57.3) > 5 || abs(pitch1 * 57.3) < 4)
+       {
+           std::cout<<pitch1 * 57.3 <<std::endl;
+           return;
+       }*/
     pcl::fromROSMsg(*laserCloudMsg1501, *laserCloudIn);
     *laserCloud_front = *laserCloud_front + *laserCloudIn;
     pcl::fromROSMsg(*laserCloudMsg1541, *laserCloudIn);
@@ -326,10 +337,8 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
     laserCloud_front->clear();
     laserCloud_back->clear();
     frame_cnt++;
-
-    if (frame_cnt == 20) {
+    if (frame_cnt == 8) {
         cloud_header = odomMsg->header;
-
         // 定义从local到map的变换矩阵
         transform_1 = Eigen::Matrix4f::Identity();
         transform_1(0, 3) = last_pose.pose.position.x; //x  如果用当前帧的话，偏差太大
@@ -370,7 +379,7 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
         // 设置输入点云
         ror.setInputCloud(laserCloud_tmp.makeShared());
         // 设置搜索半径
-        ror.setRadiusSearch(ds_size*4.0);
+        ror.setRadiusSearch(ds_size*2.0);
         // 设置半径范围内的最少点数阈值
         ror.setMinNeighborsInRadius(5);
         // 执行滤波，并带出结果数据
@@ -387,20 +396,20 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
         sor.setStddevMulThresh(1.0);
         sor.filter(laserCloudNotGround_fan);
 
-        pcl::PassThrough <PointType> pass;
+       pcl::PassThrough <PointType> pass;
         pass.setInputCloud(laserCloudNotGround_fan.makeShared());
         pass.setFilterFieldName("z");
         // X_min小可以充分发挥补盲雷达的作用。
-        pass.setFilterLimits(-2.0, 0);
+        pass.setFilterLimits(-1.5, 0);
         pass.filter(laserCloudNotGround_fan);
-
+/*
         //pcl::PassThrough <PointType> pass;
         pass.setInputCloud(laserCloudNotGround_fan.makeShared());
         pass.setFilterFieldName("y");
         // X_min小可以充分发挥补盲雷达的作用。
         pass.setFilterLimits(-35, 45);
         pass.filter(laserCloudNotGround_fan);
-
+        */
         PickBoundary_front();
 
         pcl::transformPointCloud(boundary_point_fan, boundary_fan_inMap, transform_1);
@@ -415,7 +424,12 @@ void BoundaryDetector::callback(const sensor_msgs::PointCloud2ConstPtr &laserClo
         boundary_point_fan_all.height = 1;
         boundary_point_fan_all.is_dense = true;
 
-        
+        //去除离群点
+        /*pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor1;
+        sor1.setInputCloud(boundary_point_fan_all.makeShared());
+        sor1.setMeanK(10);
+        sor1.setStddevMulThresh(0.5);
+        sor1.filter(boundary_point_fan_all);*/
 
         /*pcl::transformPointCloud(boundary_point_fan_all, boundary_point_fan_all, transform_1.inverse());
         boundary_point_fan_all.header.frame_id = "base_link";*/
@@ -667,7 +681,7 @@ void BoundaryDetector::PickBoundary_front() {
         max_num = std::max(r1,r_radius[flag][0]);
         if (max_num > r_radius[flag][0] )
         {
-            if(angle1 > 60 && angle1 < 105 )
+            if(angle1 > 60 && angle1 < 115 )
             {
                /* if (r1 > 60 && r1 < 70){
                     r_radius[flag][0] = max_num;
@@ -678,7 +692,7 @@ void BoundaryDetector::PickBoundary_front() {
             {
                 r_radius[flag][0] = max_num;
                 r_num[flag][0] = num;
-                std::cout<<"2  "<<angle1<<"  "<<r1<<std::endl;
+               // std::cout<<"2  "<<angle1<<"  "<<r1<<std::endl;
             }
         }
     }
